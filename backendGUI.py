@@ -1,3 +1,4 @@
+#importing json for using json format
 import json
 from typing import Optional, Set
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -65,3 +66,4 @@ async def esp_ws(websocket: WebSocket):
 # Running the server
 if __name__ == "__main__":
     uvicorn.run("backendGUI:app", host="0.0.0.0", port=8000, reload=True)
+
