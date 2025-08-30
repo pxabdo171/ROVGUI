@@ -6,6 +6,33 @@ import cv2
 from starlette.responses import StreamingResponse
 import threading
 import numpy as np
+import json
+import websockets
+import asyncio
+
+ws = None
+
+async def connect_ws():
+    global ws
+    try:
+        ws = await websockets.connect("ws://localhost:8000/ws/gui")
+        print("GUI connected to backend")
+
+        async def listen():
+            try:
+                while True:
+                    msg = await ws.recv()
+                    print("From backend:", msg)
+            except Exception as e:
+                print("Disconnected from backend:", e)
+
+        asyncio.create_task(listen())
+    except Exception as e:
+        print("Failed to connect:", e)
+
+app.on_startup(connect_ws)
+
+
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, 'static')
@@ -83,7 +110,7 @@ def index_page():
 
     h2{margin:0 0 12px 0;font-weight:600;color:#e6f0ff}
 
-    .motors{display:flex;flex-direction:column;gap:12px}
+    .motors{display:flex;flex-direction:column;gap:12px;margin-bottom: 100px;}
     .motor{display:flex;align-items:center;gap:12px;padding:10px;border-radius:10px;background:var(--glass)}
     .led{width:14px;height:14px;border-radius:50%;background-color: rgb(192, 19, 19);box-shadow:0 0 8px rgba(39,174,96,0.35)}
     .motor label{flex:1;font-size:15px;color:#cfe8ff}
@@ -97,7 +124,6 @@ def index_page():
   flex-direction: column; 
   align-items: center; 
   gap: 16px;
-  margin-top: 10px;
  }
 
 .joystick {
@@ -268,6 +294,15 @@ def index_page():
       color: #88c0ff;
       transform: translate(3px,10px);
     }
+
+    #video img {
+    width: 1000px !important;
+    height: 530px !important;
+    border: 2px solid #123548;
+    border-radius: 10px;
+    object-fit: cover;
+    transform:translate(0px,-50px)
+}
   </style>
 </head>
 <body>
@@ -279,11 +314,8 @@ def index_page():
         <div class="motors" id="motors-list"></div>
 
         <div class="left-bottom">
-        <div style="display:grid;grid-template-columns: repeat(2, 1fr); gap: 10px; width:100%">
-            <button class="btn" style="font-size: 20px;" id="motoron">Turn on All</button>
-            <button class="btn" style="font-size: 20px;" id="motoroff">Stop All</button>
-          </div>
-          <div><h2 style="font-size: 30px;">Servo Motors</h2>
+        
+          <div><h2 style="font-size: 30px;transform:translate(0px,15px)">Servo Motors</h2>
           <div class="servo-control">
     <label for="horizontal-range">Horizontal Servo</label>
     <input type="range" id="horizontal-range" min="0" max="180" value="90">
@@ -322,8 +354,8 @@ def index_page():
         <div class="controls" style="display:flex;flex-direction:column;gap:12px">
           <button class="btn" id="open-camera" style="font-size: 20px;">Open Camera</button>
           <div style="display:grid;grid-template-columns: repeat(2, 1fr); gap: 10px; width:100%">
-            <button class="btn" style="font-size: 20px;">Camera 1</button>
-            <button class="btn" style="font-size: 20px;">Camera 2</button>
+            <button class="btn" id="cam1" style="font-size: 20px;">Camera 1</button>
+            <button class="btn" id="cam2" style="font-size: 20px;">Camera 2</button>
           </div>
           <div class="timer panel" style="padding:12px;border-radius:10px;background:rgba(255,255,255,0.01);width:100%;height:170px">
             <div style="font-size:17px;color:var(--muted)">Timer</div>
@@ -340,7 +372,7 @@ def index_page():
             <div style="display:flex;flex-direction:column;gap:10px;transform:translate(0px,-10px)">
              <div style="display:flex;align-items:center;gap:5px;">
   <label style="width:18px;color:var(--muted);font-size:18px;">PID</label>
-  <input type="number" id="pid-p" min="0" max="10" step="0.1" value="1"
+  <input type="number" id="pid-pid" min="0" max="6" step="1" value="0"
        style="background-color:#0f2b45;border:1px solid #1f4b75;color:#fff;
               padding:4px 6px;border-radius:6px;font-size:18px;outline:none;
               text-align:center;width:90%;flex:0 0 auto;transform:translate(42px,0px)">
@@ -348,7 +380,7 @@ def index_page():
 
               <div style="display:flex;align-items:center;gap:8px;">
   <label style="width:18px;color:var(--muted);font-size:18px;">P</label>
-  <input type="number" id="pid-p" min="0" max="10" step="0.1" value="1" 
+  <input type="number" id="pid-p" min="0" max="10" step="0.1" value="0" 
          style="flex:0 0 auto;
                 background-color:#0f2b45;
                 border:1px solid #1f4b75;
@@ -385,10 +417,7 @@ def index_page():
                 text-align:center;
                 width:90%;transform:translate(40px,0px);">
       </div>
-              <div style="display:flex;gap:10px;justify-content:center">
-                <button class="btn" id="send-pid" style="width:160px;font-size:20px;">Send</button>
-                <button class="btn" id="auto-pid" style="width:160px;font-size:20px;">Auto</button>
-              </div>
+              
             </div>
           </div>
         </div>
@@ -518,20 +547,6 @@ def index_page():
       r.addEventListener('input', () => { if (v) v.textContent = r.value; });
     }
                      
-    document.getElementById('motoron').addEventListener('click', () => {
-    for (let i = 1; i <= 6; i++) {
-      document.getElementById(`led-${i}`).style.backgroundColor = 'limegreen'; 
-      document.getElementById(`r-${i}`).value = maxValue; 
-    }
-   });
-
-
-  document.getElementById('motoroff').addEventListener('click', () => {
-    for (let i = 1; i <= 6; i++) {
-      document.getElementById(`led-${i}`).style.backgroundColor = 'rgb(192, 19, 19)';
-      document.getElementById(`r-${i}`).value = 0;
-    }
-  });
       
   
 
@@ -550,7 +565,37 @@ def index_page():
       console.log('Vertical servo:', verticalRange.value);
     });
   
+    const ws = new WebSocket("ws://localhost:8000/ws/gui");
 
+    ws.onopen = () => {
+        console.log("Connected to backend");
+    };
+
+    ws.onmessage = (event) => {
+        const msg = JSON.parse(event.data);
+        console.log("Message from ESP:", msg);
+    };
+
+
+    horizontalRange.addEventListener('input', sendServoValues);
+    verticalRange.addEventListener('input', sendServoValues);
+
+    function sendServoValues() {
+        const horizontalValue = horizontalRange.value;
+        const verticalValue = verticalRange.value;
+
+        document.getElementById('horizontal-value').innerText = horizontalValue + '°';
+        document.getElementById('vertical-value').innerText = verticalValue + '°';
+
+        const msg = {
+            type: "command",
+            servo: { horizontal: horizontalValue, vertical: verticalValue }
+        };
+
+        if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify(msg));
+        }
+    }
 
     const joystick = document.getElementById('joystick');
     const stick = document.getElementById('stick');
@@ -581,6 +626,7 @@ def index_page():
       });
     }
 
+                     
 
     let t = 0; let timerId = null; const timerEl = document.getElementById('timer');
     document.getElementById('start')?.addEventListener('click', () => {
@@ -590,15 +636,32 @@ def index_page():
     document.getElementById('pause')?.addEventListener('click', () => { clearInterval(timerId); timerId = null; });
     document.getElementById('reset')?.addEventListener('click', () => { clearInterval(timerId); timerId = null; t = 0; if (timerEl) timerEl.textContent = '0.0'; });
 
-    document.getElementById('open-camera')?.addEventListener('click', () => {
-      const v = document.getElementById('video');
-      if (v) {
-        v.textContent = '';
-        v.style.background = 'linear-gradient(180deg,#00121a,#042231)';
-      }
-      const err = document.getElementById('error');
-      if (err) { err.className = 'error-ok'; err.textContent = 'No Errors'; }
+    let cameraOpen = false;
+
+    document.getElementById("open-camera").addEventListener("click", function () {
+        let videoDiv = document.getElementById("video");
+
+        if (!cameraOpen) {
+ 
+            videoDiv.innerHTML =
+                '<img id="camera-stream" src="/video_feed" ' +
+                'style="width:500px; height:300px; border:none;" />';
+            this.innerText = "Close Camera";
+            cameraOpen = true;
+        } else {
+
+            videoDiv.innerHTML = "Video feed (placeholder)";
+            this.innerText = "Open Camera";
+            cameraOpen = false;
+        }
     });
+                     
+      document.getElementById("cam1").addEventListener("click", function() {
+    fetch("/set_camera/0");
+});
+document.getElementById("cam2").addEventListener("click", function() {
+    fetch("/set_camera/1");
+});
 
     const temp = document.getElementById('temp');
     const depth = document.getElementById('depth');
@@ -614,10 +677,121 @@ def index_page():
       if (!msg) { e.className = 'error-ok'; e.textContent = 'No Errors'; }
       else { e.className = 'error-box'; e.textContent = msg; }
     };
+    
   });
 </script>
 
     """)
+
+    max_value = 255
+
+    async def send_motors(mode):
+        motors = {f"M{i}": (max_value if mode == "on" else 0) for i in range(1, 7)}
+        data = {"type": "Motors", "mode": mode, "data": motors}
+        if ws:
+            await ws.send(json.dumps(data))
+        print("Sent:", data)
+    async def send_motors1():
+      motors = {}
+      for i in range(1, 7):
+        val = await ui.run_javascript(f'document.getElementById("r-{i}").value')
+        motors[f"M{i}"] = val
+        data = {
+        "type": "Motors",
+        "data": motors
+        }
+      if ws:
+        await ws.send(json.dumps(data))
+      else:
+        print("Motors data:", data) 
+    async def send_pid():
+        valPID = await ui.run_javascript('document.getElementById("pid-pid").value')
+        valP   = await ui.run_javascript('document.getElementById("pid-p").value')
+        valI   = await ui.run_javascript('document.getElementById("pid-i").value')
+        valD   = await ui.run_javascript('document.getElementById("pid-d").value')
+
+        data = {
+            "type" : "PID",
+            "PID": valPID,
+            "P": valP,
+            "I": valI,
+            "D": valD
+        }
+        
+        await ws.send(json.dumps(data))
+        
+    ui.button('Send', on_click=send_pid).style(
+    'position: fixed; right: 20px; bottom: 20px; z-index: 9999; '
+    'width:100px !important; margin-top:8px; padding:1px 1px; border-radius:8px; '
+    'border:none; background:#123548 !important; color:#e8f7ff; cursor:pointer; '
+    'height:30px; font-size:13.5px; flex:0 0 auto; text-transform:none !important;'
+    'transform: translate(-750px,-43px) !important;'
+    )
+    
+    ui.button('Auto').style(
+    'position: fixed; right: 20px; bottom: 20px; z-index: 9999; '
+    'width:100px !important; margin-top:8px; padding:1px 1px; border-radius:8px; '
+    'border:none; background:#123548 !important; color:#e8f7ff; cursor:pointer; '
+    'height:30px; font-size:13.5px; flex:0 0 auto; text-transform:none !important;'
+    'transform: translate(-645px,-43px) !important;'
+    )
+
+    async def turn_on_all():
+        await ui.run_javascript(f"""
+            for (let i = 1; i <= 6; i++) {{
+                document.getElementById(`led-${{i}}`).style.backgroundColor = 'limegreen';
+                document.getElementById(`r-${{i}}`).value = {max_value};
+            }}
+        """)
+
+    async def stop_all():
+        await ui.run_javascript("""
+            for (let i = 1; i <= 6; i++) {
+                document.getElementById(`led-${i}`).style.backgroundColor = 'rgb(192, 19, 19)';
+                document.getElementById(`r-${i}`).value = 0;
+            }
+        """)
+
+    async def handle_turn_on():
+        await turn_on_all()
+        await send_motors("on")
+
+    async def handle_stop_all():
+        await stop_all()
+        await send_motors("off")
+    ui.button(
+    "Turn on All",
+    on_click=handle_turn_on
+    ).style(
+    'position: fixed; right: 20px; bottom: 20px; z-index: 9999; '
+    'width:160px !important; margin-top:8px; padding:1px 1px; border-radius:8px; '
+    'border:none; background:#123548 !important; color:#e8f7ff; cursor:pointer; '
+    'height:35px; font-size:13.5px; flex:0 0 auto; text-transform:none !important;'
+    'transform: translate(-1305px,-450px) !important;'
+)
+
+    ui.button(
+    "Stop All",
+    on_click=handle_stop_all
+).style(
+    'position: fixed; right: 20px; bottom: 20px; z-index: 9999; '
+    'width:160px !important; margin-top:8px; padding:1px 1px; border-radius:8px; '
+    'border:none; background:#123548 !important; color:#e8f7ff; cursor:pointer; '
+    'height:35px; font-size:13.5px; flex:0 0 auto; text-transform:none !important;'
+    'transform: translate(-1136px,-450px) !important;'
+)
+    ui.button(
+    "Send",on_click=send_motors1
+).style(
+    'position: fixed; right: 20px; bottom: 20px; z-index: 9999; '
+    'width:330px !important; margin-top:8px; padding:1px 1px; border-radius:8px; '
+    'border:none; background:#123548 !important; color:#e8f7ff; cursor:pointer; '
+    'height:20px; font-size:14px; flex:0 0 auto; text-transform:none !important;'
+    'transform: translate(-1136px,-410px) !important;font-size: 13.5px !important;'
+)
+
+
+
 
 @ui.page('/copilot')
 def copilot_page():
@@ -1436,8 +1610,8 @@ input[type=range]::-moz-range-thumb {
       <div class="controls" style="display:flex;flex-direction:column;gap:12px">
         <button class="btn" id="open-camera">Take screenshot</button>
         <div style="display: grid; grid-template-columns: repeat(2, auto); gap: 10px;">
-          <button class="btn" style="width: 100%;">Camera 1</button>
-          <button class="btn" style="width: 100%;">Camera 2</button>
+          <button class="btn" id="cam1" style="width: 100%;">Camera 1</button>
+          <button class="btn" id="cam2" style="width: 100%;">Camera 2</button>  
         </div>
       </div>
     </div>
@@ -1481,7 +1655,6 @@ input[type=range]::-moz-range-thumb {
         <div class="video" id="video3" style="margin-top: 5px;height: 300px;"></div>
       </div>
 
-      <!-- bottom tasks -->
       
     </div>
   </div>
@@ -1506,6 +1679,12 @@ window.addEventListener('DOMContentLoaded', () => {
     }, 100);
   });
 
+  document.getElementById("cam1").addEventListener("click", function() {
+    fetch("/set_camera/0");
+});
+document.getElementById("cam2").addEventListener("click", function() {
+    fetch("/set_camera/1");
+});
   document.getElementById('pause').addEventListener('click', () => {
     clearInterval(timerId);
     timerId = null;
@@ -1538,21 +1717,30 @@ window.addEventListener('DOMContentLoaded', () => {
     """)
 
 latest_frame = None
+camera_index = 0   
 
-def capture_loop(camera_index=0):
-    global latest_frame
-    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
-    while cap.isOpened():
+def capture_loop():
+    global latest_frame, camera_index
+    cap = None
+    last_index = -1
+    while True:
+     
+        if camera_index != last_index:
+            if cap is not None:
+                cap.release()
+            cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
+            last_index = camera_index
+
+        if cap is None or not cap.isOpened():
+            continue
+
         ok, frame = cap.read()
         if ok:
             latest_frame = frame
         else:
-            print("Can't get frame")
-            break
-    cap.release()
+            latest_frame = None
 
-
-threading.Thread(target=capture_loop, args=(1,), daemon=True).start()
+threading.Thread(target=capture_loop, daemon=True).start()
 
 def gen_frames():
     global latest_frame
@@ -1563,7 +1751,7 @@ def gen_frames():
                 yield (b'--frame\r\n'
                        b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
         else:
-            
+    
             img = np.zeros((400, 600, 3), dtype=np.uint8)
             cv2.putText(img, "No Camera Signal", (50, 200),
                         cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
@@ -1571,11 +1759,15 @@ def gen_frames():
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
 
-@app.get('/video_feed')
+@app.get("/video_feed")
 def video_feed():
-    return StreamingResponse(gen_frames(),
-                             media_type='multipart/x-mixed-replace; boundary=frame')
+    return StreamingResponse(gen_frames(), media_type="multipart/x-mixed-replace; boundary=frame")
 
+@app.get("/set_camera/{index}")
+def set_camera(index: int):
+    global camera_index
+    camera_index = index
+    return {"status": "ok", "camera_index": camera_index}
 @app.get('/screenshot')
 def screenshot():
     global latest_frame
