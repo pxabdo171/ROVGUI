@@ -471,10 +471,10 @@ def index_page():
 
   </div>
             <div class="g-value" id="gauge-imu">
-              <span>Pitch: 0°</span>
-              <span>Roll: 0°</span>
-              <span>Yaw: 0°</span>
-            </div>
+  <span id="pitch">Pitch: 0°</span>
+  <span id="roll">Roll: 0°</span>
+  <span id="yaw">Yaw: 0°</span>
+</div>
           </div>
 
           <div class="gauge leakage">
@@ -663,13 +663,61 @@ document.getElementById("cam2").addEventListener("click", function() {
     fetch("/set_camera/1");
 });
 
-    const temp = document.getElementById('temp');
-    const depth = document.getElementById('depth');
-    setInterval(() => {
-      if (temp) temp.textContent = (20 + Math.round(Math.random() * 8)) + '°C';
-      if (depth) depth.textContent = (Math.random() * 3).toFixed(1) + ' m';
-    }, 2000);
+    
+  let currentYaw = 0;   
+  let targetYaw = 0;    
 
+  function updateYaw(newYaw) {
+    targetYaw = newYaw;
+  }
+
+  function animateCompass() {
+    
+    currentYaw += (targetYaw - currentYaw) * 0.1; 
+    document.getElementById("needleGroup")
+      .setAttribute("transform", `rotate(${currentYaw} 100 100)`);
+    requestAnimationFrame(animateCompass);
+  }
+
+  animateCompass();
+
+  const socket = new WebSocket("ws://localhost:8000/ws/gui");
+
+  socket.onopen = () => {
+    console.log("Connected to backend");
+  };
+
+  socket.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+
+    if (data.type === "imu") {
+   
+      document.getElementById("pitch").textContent = `Pitch: ${data.pitch}°`;
+      document.getElementById("roll").textContent = `Roll: ${data.roll}°`;
+      document.getElementById("yaw").textContent = `Yaw: ${data.yaw}°`;
+
+   
+      updateYaw(data.yaw);
+    }
+    if (data.type === "temp") {
+      document.getElementById("temp").textContent = `${data.degree}°C`;
+    }
+    if (data.type === "depth") {
+      document.getElementById("depth").textContent = `${data.distance} m`;
+    }
+    if (data.type === "leakage") {
+    const leakageDiv = document.getElementById("leakage-status");
+    if (data.status === 1) {
+      leakageDiv.textContent = "Danger";
+      leakageDiv.style.backgroundColor = "#7f1d1d";
+      leakageDiv.style.color = "white";
+    } else {
+      leakageDiv.textContent = "Safe";
+      leakageDiv.style.backgroundColor = "#14532d";
+      leakageDiv.style.color = "inherit";
+    }
+  }
+  };
 
     window.setROVError = function (msg) {
       const e = document.getElementById('error');
