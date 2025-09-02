@@ -172,9 +172,10 @@ def index_page():
     .error-box{margin-top:8px;padding:12px;border-radius:10px;background:rgba(229,62,62,0.09);border:1px solid rgba(229,62,62,0.12);color:#ffdede}
     .error-ok{background:rgba(39,174,96,0.06);border:1px solid rgba(39,174,96,0.12);color:#d7ffea;height: 25px}
 
-    /* bottom task bar */
-    .bottom {grid-column: 1 / span 3;display: flex;flex-direction: column;gap: 12px;margin-top: 12px}
-    .task{flex:1;padding:14px;border-radius:12px;background:rgba(255,255,255,0.02);text-align:center}
+ 
+    .bottom {grid-column: 3 / span 1;display: grid;grid-template-columns: 1fr 1fr; gap: 12px;margin-top: 12px;}
+    .bottom .task:nth-child(3) {grid-column: 1 / span 2; }
+    .task{flex:1;padding:5px;border-radius:12px;background:rgba(255,255,255,0.02);text-align:center}
 
     .stop-row{display:flex;gap:12px;align-items:center}
     .stop{flex:1;padding:14px;border-radius:10px;background:rgba(255,255,255,0.03);text-align:center}
@@ -327,23 +328,30 @@ def index_page():
     <div class="value" id="vertical-value">90°</div>
   </div>
           </div>
-          <div class="joystick-wrap" >
-            <div class="joystick" id="joystick">
-              <div class="stick" id="stick"></div>
-            </div>
-            <div class="port-select">
-              <label style="color:var(--muted);font-size:17px">Joystick Port</label>
-              <div style="display:flex;gap:8px;align-items:center;transform:translate(0px,10px);">
-                <select id="port">
-                  <option>COM1</option>
-                  <option>COM2</option>
-                  <option selected>COM3</option>
-                  <option>COM4</option>
-                </select>
-                <div class="port-indicator"><div class="led" id="port-led" style="background-color: rgb(192, 19, 19);"></div><div style="color:var(--muted);font-size:17px" id="port-status">Disconnected</div></div>
-              </div>
-            </div>
-          </div>
+          <div class="joystick-wrap">
+  <span style="font-size:15px">Navigation Joystick</span>
+  
+  <div class="joystick">
+    <div class="stick"></div>
+  </div>
+  
+  <div class="port-select">
+    <label style="color:var(--muted);font-size:17px">Joystick Port</label>
+    <div style="display:flex;gap:8px;align-items:center;transform:translate(0px,10px);">
+      <select class="port">
+        <option>COM1</option>
+        <option>COM2</option>
+        <option selected>COM3</option>
+        <option>COM4</option>
+      </select>
+      <div class="port-indicator">
+        <div class="led port-led" style="background-color: rgb(192, 19, 19);"></div>
+        <div style="color:var(--muted);font-size:17px" class="port-status">Disconnected</div>
+      </div>
+    </div>
+  </div>
+</div>
+
         </div>
       </div>
 
@@ -368,14 +376,16 @@ def index_page():
           </div>
 
           <div class="panel" style="padding:10px;background:rgba(255,255,255,0.02);width:100%;height:250px;margin-bottom:0">
-            <h2 style="margin-bottom:8px;font-size:20px;">PID Control</h2>
-            <div style="display:flex;flex-direction:column;gap:10px;transform:translate(0px,-10px)">
+            <h2 style="margin-bottom:8px;font-size:20px; transform:translate(0px,-10px)">PID Control</h2>
+            <div style="display:flex;flex-direction:column;gap:10px;transform:translate(0px,-20px)">
              <div style="display:flex;align-items:center;gap:5px;">
   <label style="width:18px;color:var(--muted);font-size:18px;">PID</label>
-  <input type="number" id="pid-pid" min="0" max="6" step="1" value="0"
-       style="background-color:#0f2b45;border:1px solid #1f4b75;color:#fff;
-              padding:4px 6px;border-radius:6px;font-size:18px;outline:none;
-              text-align:center;width:90%;flex:0 0 auto;transform:translate(42px,0px)">
+  <select class="port1" style="width:90%;margin-left:45px;text-align:center;font-size:17px">
+        <option selected>Heave</option>
+        <option>Yaw</option>
+        <option>Surge</option>
+        <option>Sway</option>
+      </select>
 </div>
 
               <div style="display:flex;align-items:center;gap:8px;">
@@ -483,21 +493,39 @@ def index_page():
           </div>
         </div>
 
-        <div style="margin-top:12px">
-          <h2 style="margin-top:0;font-size: 25px;">Error</h2>
-          <div id="error" class="error-ok" style="font-size: 20px;">No Errors</div>
+        <div style="margin-top:3px">
+          <h2 style="margin-top:0;font-size: 25px;margin-bottom:0;">Error</h2>
+          <div id="error" class="error-ok" style="font-size: 20px; margin-top:5px;">No Errors</div>
         </div>
 
-        <div style="margin-top:18px" class="stop-row">
-          <button class="stop" style="font-size: 20px;">Stop</button>
-          <button class="e-stop" style="font-size: 20px;">Emergency Stop</button>
-        </div>
 
         <div class="bottom">
           <button class="task" style="font-size: 20px;">Task 1</button>
           <button class="task" style="font-size: 20px;">Task 2</button>
           <button class="task" style="font-size: 20px;">Task 3</button>
         </div>
+        <div class="joystick-wrap" style="transform:translate(0px,30px)">
+  <span style="font-size:15px">Pitch Joystick</span>
+  <div class="joystick">
+    <div class="stick"></div>
+  </div>
+  <div class="port-select">
+    <label style="color:var(--muted);font-size:17px">Joystick Port</label>
+    <div style="display:flex;gap:8px;align-items:center;transform:translate(0px,10px);">
+      <select class="port">
+        <option>COM1</option>
+        <option>COM2</option>
+        <option selected>COM3</option>
+        <option>COM4</option>
+      </select>
+      <div class="port-indicator">
+        <div class="led port-led" style="background-color: rgb(192, 19, 19);"></div>
+        <div style="color:var(--muted);font-size:17px" class="port-status">Disconnected</div>
+      </div> 
+    </div>   
+  </div>   
+</div>
+
         
       </div>
 
@@ -597,34 +625,46 @@ def index_page():
         }
     }
 
-    const joystick = document.getElementById('joystick');
-    const stick = document.getElementById('stick');
-    const portSelect = document.getElementById('port');
-    const portLed = document.getElementById('port-led');
-    const portStatus = document.getElementById('port-status');
+  document.querySelectorAll('.joystick-wrap').forEach(wrapper => {
+  const joystick = wrapper.querySelector('.joystick');
+  const stick = wrapper.querySelector('.stick');
+  const portSelect = wrapper.querySelector('.port');
+  const portLed = wrapper.querySelector('.port-led');
+  const portStatus = wrapper.querySelector('.port-status');
 
-    if (portSelect && portLed && portStatus) {
-      portSelect.addEventListener('change', () => {
-        portLed.style.background = '#f59e0b';
-        portStatus.textContent = 'Connecting...';
-        setTimeout(() => { portLed.style.background = 'var(--success)'; portStatus.textContent = 'Connected'; }, 700);
-      });
-    }
+  if (portSelect && portLed && portStatus) {
+    portSelect.addEventListener('change', () => {
+      portLed.style.background = '#f59e0b';
+      portStatus.textContent = 'Connecting...';
+      setTimeout(() => {
+        portLed.style.background = 'var(--success)';
+        portStatus.textContent = 'Connected';
+      }, 700);
+    });
+  }
 
-    let dragging = false;
-    if (joystick && stick) {
-      joystick.addEventListener('pointerdown', e => { dragging = true; joystick.setPointerCapture(e.pointerId); });
-      window.addEventListener('pointerup', () => { dragging = false; stick.style.transform = 'translate(-50%, -50%)'; });
-      joystick.addEventListener('pointermove', e => {
-        if (!dragging) return;
-        const rect = joystick.getBoundingClientRect();
-        const cx = rect.left + rect.width / 2;
-        const cy = rect.top + rect.height / 2;
-        const dx = Math.max(-48, Math.min(48, e.clientX - cx));
-        const dy = Math.max(-48, Math.min(48, e.clientY - cy));
-        stick.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
-      });
-    }
+  let dragging = false;
+  if (joystick && stick) {
+    joystick.addEventListener('pointerdown', e => {
+      dragging = true;
+      joystick.setPointerCapture(e.pointerId);
+    });
+    window.addEventListener('pointerup', () => {
+      dragging = false;
+      stick.style.transform = 'translate(-50%, -50%)';
+    });
+    joystick.addEventListener('pointermove', e => {
+      if (!dragging) return;
+      const rect = joystick.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      const dx = Math.max(-48, Math.min(48, e.clientX - cx));
+      const dy = Math.max(-48, Math.min(48, e.clientY - cy));
+      stick.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+    });
+  }
+});
+
 
                      
 
@@ -753,7 +793,7 @@ document.getElementById("cam2").addEventListener("click", function() {
       else:
         print("Motors data:", data) 
     async def send_pid():
-        valPID = await ui.run_javascript('document.getElementById("pid-pid").value')
+        valPID = await ui.run_javascript('document.querySelector(".port1").value')
         valP   = await ui.run_javascript('document.getElementById("pid-p").value')
         valI   = await ui.run_javascript('document.getElementById("pid-i").value')
         valD   = await ui.run_javascript('document.getElementById("pid-d").value')
