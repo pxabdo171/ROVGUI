@@ -616,8 +616,9 @@ def index_page():
         document.getElementById('vertical-value').innerText = verticalValue + '°';
 
         const msg = {
-            type: "command",
-            servo: { horizontal: horizontalValue, vertical: verticalValue }
+            type: "servo",
+            H_Servo: horizontalValue,
+            V_Servo: verticalValue
         };
 
         if (ws.readyState === WebSocket.OPEN) {
@@ -773,9 +774,9 @@ document.getElementById("cam2").addEventListener("click", function() {
 
     max_value = 255
 
-    async def send_motors(mode):
-        motors = {f"M{i}": (max_value if mode == "on" else 0) for i in range(1, 7)}
-        data = {"type": "Motors", "mode": mode, "data": motors}
+    async def send_motors(on: bool):
+        motors = {f"M{i}": (max_value if on else 0) for i in range(1, 7)}
+        data = {"type": "motors", **motors}
         if ws:
             await ws.send(json.dumps(data))
         print("Sent:", data)
@@ -784,14 +785,14 @@ document.getElementById("cam2").addEventListener("click", function() {
       for i in range(1, 7):
         val = await ui.run_javascript(f'document.getElementById("r-{i}").value')
         motors[f"M{i}"] = val
-        data = {
-        "type": "Motors",
-        "data": motors
-        }
+
+      data = {"type": "motors", **motors}
+
       if ws:
         await ws.send(json.dumps(data))
       else:
-        print("Motors data:", data) 
+        print("Motors data:", data)
+
     async def send_pid():
         valPID = await ui.run_javascript('document.querySelector(".port1").value')
         valP   = await ui.run_javascript('document.getElementById("pid-p").value')
@@ -842,11 +843,11 @@ document.getElementById("cam2").addEventListener("click", function() {
 
     async def handle_turn_on():
         await turn_on_all()
-        await send_motors("on")
+        await send_motors(True)
 
     async def handle_stop_all():
         await stop_all()
-        await send_motors("off")
+        await send_motors(False)
     ui.button(
     "Turn on All",
     on_click=handle_turn_on
