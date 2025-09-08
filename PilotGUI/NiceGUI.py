@@ -1785,7 +1785,19 @@ document.getElementById("cam2").addEventListener("click", function() {
     t = 0;
     timerEl.textContent = '0.0';
   });
-                     let currentDiv = 0;
+    const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const ws = new WebSocket(wsProtocol + '//' + location.hostname + ':8000/ws/gui');
+
+     function blobToDataURL(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result); 
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  }                                 
+
+    let currentDiv = 0;
     const divs = ["video1", "video2", "video3"];
 
     document.getElementById("open-camera").addEventListener("click", async () => {
@@ -1798,6 +1810,22 @@ document.getElementById("cam2").addEventListener("click", function() {
             `<img src="${imgURL}" style="width:100%; height:100%; object-fit:cover; border-radius:10px;">`;
 
         currentDiv = (currentDiv + 1) % divs.length;
+        try {
+      const dataUrl = await blobToDataURL(blob); // "data:image/jpeg;base64,..."
+      const payload = {
+        type: "screenshot",
+        filename: `screenshot_${Date.now()}.jpg`,
+        image: dataUrl
+      };
+      const text = JSON.stringify(payload);
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(text);
+      } else {
+        ws.addEventListener('open', () => ws.send(text), { once: true });
+      }
+    } catch (err) {
+      console.error("failed to send screenshot:", err);
+    }             
     });
 });
                      
