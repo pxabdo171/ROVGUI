@@ -1,5 +1,7 @@
 #importing json for using json format
 import json
+import base64
+from datetime import datetime
 from typing import Optional, Set
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import uvicorn
@@ -28,9 +30,24 @@ async def gui_ws(websocket: WebSocket):
             # If the msg is command send it to the ESP client (will update it)
             if msg.get("type") == "command" and esp_client:
                 await esp_client.send_text(json.dumps(msg))
+            # get the screenshot from front
+            elif msg.get("type") == "screenshot":
+                img_b64 = msg.get("image", "")
+                if "," in img_b64:
+                    _, imgstr = img_b64.split(",", 1)
+                else:
+                    imgstr = img_b64
+                try:
+                    img_bytes = base64.b64decode(imgstr)
+                    filename = msg.get("filename") or f"screenshot_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}.jpg"
+                    with open(filename, "wb") as f:
+                        f.write(img_bytes)
+                    print("Saved screenshot:", filename)
+                except Exception as e:
+                    print("Failed to save screenshot:", e)
+
             else:
                 print("GUI message:", msg)
-
     except WebSocketDisconnect:
         gui_clients.remove(websocket)
         print("GUI disconnected")
