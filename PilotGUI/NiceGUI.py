@@ -1,3 +1,4 @@
+import time
 from fastapi import Request
 from nicegui import ui, app
 import os
@@ -1674,10 +1675,15 @@ input[type=range]::-moz-range-thumb {
 .panel::-webkit-scrollbar {
   display: none;
 }
+.task{transition: all 0.3s ease;}
+.task.active {
+  background: #123548;   /* accent color */
+  color: white;
+  font-weight: bold;
+  border: none;
+}
 
-
-
-
+.task:hover{background: #1d2736;}
 
     /* responsive */
     @media (max-width:980px){.grid{grid-template-columns:1fr;}.bottom{flex-direction:column}}
@@ -1716,10 +1722,11 @@ input[type=range]::-moz-range-thumb {
           gap: 20px;
           align-items: center;
       ">
+
         <div class="tasks" style="display:flex;flex-direction:column;gap:10px;">
-          <div class="task">Task 1</div>
-          <div class="task">Task 2</div>
-          <div class="task">Task 3</div>
+          <button class="task" id="task1">Geometry Shapes</button>
+          <button class="task" id="task2">Waste Items</button>
+          <button class="task" id="task3">Fish Types</button>
         </div>
 
    
@@ -1754,108 +1761,202 @@ input[type=range]::-moz-range-thumb {
     ui.html(custom_html).classes('w-full')
 
     ui.add_body_html("""
-    <script>
+<script>
 window.addEventListener('DOMContentLoaded', () => {
-  let t = 0;
-  let timerId = null;
+  // --- timer + camera switch (unchanged) ---
+  let t = 0, timerId = null;
   const timerEl = document.getElementById('timer');
+  document.getElementById('start').addEventListener('click', () => { if (timerId) return; timerId = setInterval(() => { t += 0.1; timerEl.textContent = t.toFixed(1); }, 100); });
+  document.getElementById('pause').addEventListener('click', () => { clearInterval(timerId); timerId = null; });
+  document.getElementById('reset').addEventListener('click', () => { clearInterval(timerId); timerId = null; t = 0; timerEl.textContent = '0.0'; });
+  document.getElementById('cam1').addEventListener('click', () => fetch('/set_camera/0'));
+  document.getElementById('cam2').addEventListener('click', () => fetch('/set_camera/1'));
 
-  document.getElementById('start').addEventListener('click', () => {
-    if (timerId) return;
-    timerId = setInterval(() => {
-      t += 0.1;
-      timerEl.textContent = t.toFixed(1);
-    }, 100);
-  });
-
-  document.getElementById("cam1").addEventListener("click", function() {
-    fetch("/set_camera/0");
-});
-document.getElementById("cam2").addEventListener("click", function() {
-    fetch("/set_camera/1");
-});
-  document.getElementById('pause').addEventListener('click', () => {
-    clearInterval(timerId);
-    timerId = null;
-  });
-
-  document.getElementById('reset').addEventListener('click', () => {
-    clearInterval(timerId);
-    timerId = null;
-    t = 0;
-    timerEl.textContent = '0.0';
-  });
-    const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  // --- WS setup ---
+  const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const ws = new WebSocket(wsProtocol + '//' + location.hostname + ':8000/ws/gui');
 
-     function blobToDataURL(blob) {
+  // optional: set current model from elsewhere in your UI
+  // window.currentModelType = 'waste' | 'shapes';
+  if (!('currentModelType' in window)) window.currentModelType = 'shapes';
+
+  // helpers
+  function blobToDataURL(blob) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result); 
+      reader.onloadend = () => resolve(reader.result);
       reader.onerror = reject;
       reader.readAsDataURL(blob);
     });
-  }                                 
+  }
+  function uuid() {
+    return Math.random().toString(36).slice(2) + Date.now().toString(36);
+  }
 
-    let currentDiv = 0;
-    const divs = ["video1", "video2", "video3"];
+  // map: requestId -> div id
+  const requestMap = {};
+  let currentDiv = 0;
+  const divs = ['video1', 'video2', 'video3'];
 
-    document.getElementById("open-camera").addEventListener("click", async () => {
-        const response = await fetch("/screenshot?" + new Date().getTime()); 
-        const blob = await response.blob();
-        const imgURL = URL.createObjectURL(blob);
+  // --- Take screenshot flow ---
+  document.getElementById('open-camera').addEventListener('click', async () => {
+    // 1) fetch a still from the local GUI endpoint
+    const response = await fetch('/screenshot?' + Date.now(), { cache: 'no-store' });
+    if (!response.ok) {
+      console.error('screenshot failed', response.status);
+      return;
+    }
+    const blob = await response.blob();
+    const imgURL = URL.createObjectURL(blob);
 
-        const targetDiv = divs[currentDiv];
-        document.getElementById(targetDiv).innerHTML = 
-            `<img src="${imgURL}" style="width:100%; height:100%; object-fit:cover; border-radius:10px;">`;
+    // 2) display raw image immediately
+    const targetDivId = divs[currentDiv];
+    const tile = document.getElementById(targetDivId);
+    tile.style.position = 'relative'; // so caption can be absolutely positioned
+    tile.innerHTML = `<img src="${imgURL}" style="width:100%; height:100%; object-fit:cover; border-radius:10px;">`;
 
-        currentDiv = (currentDiv + 1) % divs.length;
-        try {
+    // next slot
+    currentDiv = (currentDiv + 1) % divs.length;
+
+    // 3) prepare request id and remember where to place the annotated result
+    const requestId = uuid();
+    requestMap[requestId] = targetDivId;
+
+    // 4) send to backend for inference
+    try {
       const dataUrl = await blobToDataURL(blob); // "data:image/jpeg;base64,..."
       const payload = {
-        type: "screenshot",
+        type: 'screenshot',
         filename: `screenshot_${Date.now()}.jpg`,
-        image: dataUrl
+        image: dataUrl,
+        model_type: window.currentModelType || 'shapes', // 'shapes' | 'waste'
+        requestId
       };
       const text = JSON.stringify(payload);
+
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(text);
       } else {
         ws.addEventListener('open', () => ws.send(text), { once: true });
       }
     } catch (err) {
-      console.error("failed to send screenshot:", err);
-    }             
-    });
+      console.error('failed to send screenshot:', err);
+    }
+
+    // cleanup the object URL later
+    setTimeout(() => URL.revokeObjectURL(imgURL), 15000);
+  });
+
+
+  // add 3 tasks in message handler (Eraky)  
+  ws.onmessage = (event) => {
+  let msg;
+  try { msg = JSON.parse(event.data); } catch { return; }
+
+  // include fish_analysis here
+  if (msg.type !== 'shapes_analysis' && msg.type !== 'waste_analysis' && msg.type !== 'fish_analysis') {
+    return;
+  }
+
+  const divId = requestMap[msg.requestId];
+  if (!divId) return;
+  const tile = document.getElementById(divId);
+  tile.style.position = 'relative';
+
+  let caption = '';
+  if (msg.type === 'shapes_analysis' && msg.data) {
+    const d = msg.data;
+    caption = `Circle:${d.Circle} | Square:${d.Square} | Triangle:${d.Triangle} | Cross:${d.Cross} | Eq=${d.equation}`;
+  } else if (msg.type === 'waste_analysis' && msg.data) {
+    caption = Object.entries(msg.data).map(([k, v]) => `${k}:${v}`).join('  ');
+  } else if (msg.type === 'fish_analysis' && msg.data) {
+    caption = Object.entries(msg.data).map(([k, v]) => `${k}:${v}`).join('  ');
+  }
+
+  if (msg.image) {
+    tile.innerHTML = `
+      <img src="${msg.image}" style="width:100%; height:100%; object-fit:cover; border-radius:10px;">
+      <div style="
+        position:absolute; left:10px; right:10px; bottom:10px;
+        background:rgba(0,0,0,0.45); color:#fff; padding:6px 8px;
+        border-radius:8px; font-size:14px;">
+        ${caption}
+      </div>`;
+  } else {
+    tile.insertAdjacentHTML('beforeend',
+      `<div style="position:absolute; left:10px; right:10px; bottom:10px;
+                   background:rgba(0,0,0,0.45); color:#fff; padding:6px 8px;
+                   border-radius:8px; font-size:14px;">${caption}</div>`);
+  }
+
+  delete requestMap[msg.requestId];
+};
+
+  // optional: auto-reconnect
+  ws.onclose = () => console.warn('WS closed');
+  ws.onerror = (e) => console.error('WS error', e);
+
+
+
+  //  add 3 tasks and buttons (Eraky)
+                                
+  const tasks = document.querySelectorAll('.task');
+
+  function setActiveTask(selectedId, model) {
+    window.currentModelType = model;
+
+    // reset all buttons
+    tasks.forEach(btn => btn.classList.remove('active'));
+
+    // highlight the selected one
+    document.getElementById(selectedId).classList.add('active');
+
+    console.log(`✅ Selected model: ${model}`);
+  }
+
+  document.getElementById('task1').addEventListener('click', () => {
+    setActiveTask('task1', 'shapes');
+  });
+
+  document.getElementById('task2').addEventListener('click', () => {
+    setActiveTask('task2', 'waste');
+  });
+
+  document.getElementById('task3').addEventListener('click', () => {
+    setActiveTask('task3', 'fish');
+  });
+        
 });
-                     
 </script>
+
 
     """)
 
 latest_frame = None
 camera_index = 0   
+rtsp_url = "rtsp://admin:sall1221A@10.0.0.12:554/Streaming/Channels/101"
 
 def capture_loop():
-    global latest_frame, camera_index
+    global latest_frame
     cap = None
-    last_index = -1
-    while True:
-     
-        if camera_index != last_index:
-            if cap is not None:
-                cap.release()
-            cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
-            last_index = camera_index
 
+    while True:
         if cap is None or not cap.isOpened():
-            continue
+            cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
+            if not cap.isOpened():
+                print(" RTSP stream Connection faild")
+                time.sleep(1)  
+                continue
 
         ok, frame = cap.read()
         if ok:
             latest_frame = frame
         else:
+            print(" Error frame ")
             latest_frame = None
+            cap.release()
+            cap=None
+
 
 threading.Thread(target=capture_loop, daemon=True).start()
 
@@ -1868,7 +1969,6 @@ def gen_frames():
                 yield (b'--frame\r\n'
                        b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
         else:
-    
             img = np.zeros((400, 600, 3), dtype=np.uint8)
             cv2.putText(img, "No Camera Signal", (50, 200),
                         cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
