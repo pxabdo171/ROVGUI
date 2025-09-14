@@ -2,15 +2,24 @@ import json
 import base64
 from datetime import datetime
 from typing import Optional, Set
+from ultralytics import YOLO
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import uvicorn
 
 # Image processing and AI libraries
 import cv2
 import numpy as np
-from ultralytics import YOLO
 import contextlib
 import io
+import os
+
+# Directory to save screenshots
+SAVE_DIR = "screenshots"
+os.makedirs(SAVE_DIR, exist_ok=True)
+
+def _save_bytes(path: str, data: bytes) -> None:
+    with open(path, "wb") as f:
+        f.write(data)
 
 app = FastAPI()
 
@@ -18,17 +27,31 @@ app = FastAPI()
 gui_clients: Set[WebSocket] = set()
 esp_client: Optional[WebSocket] = None
 
-# Load both models
-model_shapes = YOLO("Shapes_Task.pt")
+# Load AI models (Eraky)
+model_shapes = YOLO(r"C:\Users\mokaa\PilotGUI\Shapes_Task.pt")
 model_shapes.verbose = False
 
-model_waste = YOLO("Waste_Model.pt")
+model_fish = YOLO(r"C:\Users\mokaa\PilotGUI\best_fish_no_augmentation.pt")
+model_fish.verbose = False
+
+model_waste = YOLO(r"C:\Users\mokaa\PilotGUI\Waste_Model.pt")
 model_waste.verbose = False
 
-# Analyze image with shapes model
-def process_shapes(img_bytes: bytes):
-    img_array = np.frombuffer(img_bytes, np.uint8)
-    img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+# help for back image (Eraky)
+# 1- Convert BGR image to JPEG bytes
+def _jpeg_bytes(img_bgr, quality: int = 85) -> bytes | None:
+    ok, buf = cv2.imencode(".jpg", img_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+    return buf.tobytes() if ok else None
+
+# 2- Convert JPEG bytes to data URL
+def _to_data_url(jpeg_bytes: bytes) -> str:
+    b64 = base64.b64encode(jpeg_bytes).decode("ascii")
+    return f"data:image/jpeg;base64,{b64}"
+
+# 3- Run models and return counts and overlay image (Eraky)
+def run_shapes_with_overlay(img_bytes: bytes):
+    arr = np.frombuffer(img_bytes, np.uint8)
+    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
 
     with contextlib.redirect_stdout(io.StringIO()):
         results = model_shapes(img)
@@ -43,31 +66,20 @@ def process_shapes(img_bytes: bytes):
         except Exception as e:
             print("Error in shapes box:", e)
 
-    equation_output = (
+    counts["equation"] = (
         counts["Circle"] * 20 +
         counts["Square"] * 15 +
         counts["Triangle"] * 10 +
         counts["Cross"] * 5
     )
 
-    # Print to terminal
-    print(f"\nShapes Detection:")
-    for shape, count in counts.items():
-        print(f" - {shape}: {count}")
-    print(f" ➕ Equation = {equation_output}")
+    overlay_bgr = results[0].plot()
+    overlay_jpeg = _jpeg_bytes(overlay_bgr, 85)
+    return counts, overlay_jpeg
 
-    return {
-        "Circle": counts["Circle"],
-        "Square": counts["Square"],
-        "Triangle": counts["Triangle"],
-        "Cross": counts["Cross"],
-        "equation": equation_output
-    }
-
-# Analyze image with waste model
-def process_waste(img_bytes: bytes):
-    img_array = np.frombuffer(img_bytes, np.uint8)
-    img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+def run_waste_with_overlay(img_bytes: bytes):
+    arr = np.frombuffer(img_bytes, np.uint8)
+    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
 
     with contextlib.redirect_stdout(io.StringIO()):
         results = model_waste(img)
@@ -81,16 +93,35 @@ def process_waste(img_bytes: bytes):
                 label = model_waste.names[cls]
                 waste_counts[label] = waste_counts.get(label, 0) + 1
         except Exception as e:
-            print("⚠Error in waste box:", e)
+            print("⚠ Error in waste box:", e)
 
-    # Print to terminal
-    print("\nWaste Detection:")
-    for label, count in waste_counts.items():
-        print(f" - {label}: {count}")
+    overlay_bgr = results[0].plot()
+    overlay_jpeg = _jpeg_bytes(overlay_bgr, 85)
+    return waste_counts, overlay_jpeg
 
-    return waste_counts
+def run_fish_with_overlay(img_bytes: bytes):
+    arr = np.frombuffer(img_bytes, np.uint8)
+    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+   
+    with contextlib.redirect_stdout(io.StringIO()):
+        results = model_fish(img)
 
-# WebSocket endpoint for GUI clients
+    fish_counts = {}
+    for box in results[0].boxes:
+        try:
+            conf = float(box.conf[0])
+            if conf >= 0.6:
+                cls = int(box.cls[0])
+                label = model_fish.names[cls]
+                fish_counts[label] = fish_counts.get(label, 0) + 1
+        except Exception as e:
+            print("⚠ Error in fish box:", e)
+  
+    overlay_bgr = results[0].plot()
+    overlay_jpeg = _jpeg_bytes(overlay_bgr, 85)
+    return fish_counts, overlay_jpeg
+
+
 @app.websocket("/ws/gui")
 async def gui_ws(websocket: WebSocket):
     await websocket.accept()
@@ -107,7 +138,8 @@ async def gui_ws(websocket: WebSocket):
 
             elif msg.get("type") == "screenshot":
                 img_b64 = msg.get("image", "")
-                model_type = msg.get("model_type", "shapes")  # default to shapes
+                model_type = msg.get("model_type", "shapes")
+                request_id = msg.get("requestId")
 
                 if "," in img_b64:
                     _, imgstr = img_b64.split(",", 1)
@@ -115,30 +147,41 @@ async def gui_ws(websocket: WebSocket):
                     imgstr = img_b64
 
                 try:
-                    img_bytes = base64.b64decode(imgstr)
+                    img_bytes = base64.b64decode(imgstr)    
                     filename = msg.get("filename") or f"screenshot_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}.jpg"
-                    with open(filename, "wb") as f:
-                        f.write(img_bytes)
-                    print(f"\n📸 Screenshot saved: {filename}")
 
-                    # Run selected model only
                     if model_type == "shapes":
-                        result = process_shapes(img_bytes)
-                        await websocket.send_text(json.dumps({
-                            "type": "shapes_analysis",
-                            "data": result
-                        }))
+                        data, overlay_jpeg = run_shapes_with_overlay(img_bytes)
+                        payload = {"type": "shapes_analysis", "data": data, "requestId": request_id}
+                        
                     elif model_type == "waste":
-                        result = process_waste(img_bytes)
-                        await websocket.send_text(json.dumps({
-                            "type": "waste_analysis",
-                            "data": result
-                        }))
+                        data, overlay_jpeg = run_waste_with_overlay(img_bytes)
+                        payload = {"type": "waste_analysis", "data": data, "requestId": request_id}
+                    
+                    elif model_type == "fish":
+                        data, overlay_jpeg = run_fish_with_overlay(img_bytes)
+                        payload = {"type": "fish_analysis", "data": data, "requestId": request_id}
                     else:
-                        print("Unknown model_type:", model_type)
+                        payload = {"type": "error", "message": f"Unknown model_type: {model_type}", "requestId": request_id}
+                        overlay_jpeg = None
+
+                    if overlay_jpeg:
+                        name, ext = os.path.splitext(filename)
+                        annotated_path = os.path.join(SAVE_DIR, f"{name}_annotated{ext}")
+                        _save_bytes(annotated_path, overlay_jpeg)
+                        print(f"🖼️ Annotated saved: {annotated_path}")
+
+                        payload["image"] = _to_data_url(overlay_jpeg)
+
+                    await websocket.send_text(json.dumps(payload))
 
                 except Exception as e:
                     print("Failed to process image:", e)
+                    await websocket.send_text(json.dumps({
+                        "type": "error",
+                        "message": f"failed to process image: {e}",
+                        "requestId": request_id
+                    }))
 
             else:
                 print("GUI message:", msg)
@@ -147,7 +190,6 @@ async def gui_ws(websocket: WebSocket):
         gui_clients.remove(websocket)
         print("GUI disconnected")
 
-# WebSocket endpoint for ESP client
 @app.websocket("/ws/esp")
 async def esp_ws(websocket: WebSocket):
     global esp_client
@@ -171,6 +213,5 @@ async def esp_ws(websocket: WebSocket):
         esp_client = None
         print("❌ ESP disconnected")
 
-# Run the server
 if __name__ == "__main__":
     uvicorn.run("backendGUI:app", host="0.0.0.0", port=8000, reload=True)
