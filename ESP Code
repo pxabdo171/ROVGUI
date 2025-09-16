@@ -1,0 +1,233 @@
+// INCLUDING LIBRARIES
+#include <ESP8266WiFi.h>
+#include <WebSocketsClient.h>
+#include <ArduinoJson.h>
+#include <Wire.h>
+#include <MPU6050.h>
+#include <math.h>
+#include <DHT11.h>
+
+
+// SENSORS DEFINE
+#define leakage A0
+DHT11 temp(14);
+
+
+// TEMP & LEAK DECLRATIONS
+int temperature;
+int level;
+
+// LEAKING INTIALIZED AS FALSE
+int IsLeaked = 0;
+
+// MPU OBJECT TO DEAL WITH
+MPU6050 mpu; 
+
+
+// MPU DECLRATIONS
+unsigned long lastTime;
+float dt;
+
+// ACCELEROMETER & GYROSCOOP VALUES INTIALIZE
+int16_t ax, ay, az;
+int16_t gx, gy, gz;
+
+
+// ROLL(X), PITCH(Y), YAW(Z) INTIALIZE
+float angleX = 0, angleY = 0, angleZ = 0; 
+
+//RATES INTIALIZE
+float gyroXrate, gyroYrate, gyroZrate;
+
+// WIFI INTIALIZE
+const char* ssid = "SSID";
+const char* password = "Password";
+
+// WEBSOCKETS OBJECT TO DEAL WITH
+WebSocketsClient webSocket;
+
+// RECIVING PAYLOAD FROM GUI
+void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
+  if (type == WStype_TEXT) {
+    // PARSE INCOMING JSON FORMAT
+    StaticJsonDocument<500> doc;
+    StaticJsonDocument<500> doc1;
+    StaticJsonDocument<500> doc2;
+    deserializeJson(doc, payload);
+    deserializeJson(doc1, payload);
+    deserializeJson(doc2, payload);
+    
+    String type = doc["type"];
+    String PID = doc["PID"];
+    float P = doc["P"];
+    float I = doc["I"];
+    float D = doc["D"];
+
+    String type1 = doc1["type"];
+    float H_SERVO = doc1["H_Servo"];
+    float V_SERVO = doc1["V_Servo"];
+   
+
+    String type2 = doc2["type"];
+    float M1 = doc2["M1"];
+    float M2 = doc2["M2"];
+    float M3 = doc2["M3"];
+    float M4 = doc2["M4"];
+    float M5 = doc2["M5"];
+    float M6 = doc2["M6"];
+
+    Serial.print("Type: "); Serial.println(type);
+    Serial.print("PID: "); Serial.println(PID);
+    Serial.print("P: "); Serial.println(P);
+    Serial.print("I: "); Serial.println(I);
+    Serial.print("D: "); Serial.println(D);
+
+
+    Serial.print("Type: "); Serial.println(type1);
+    Serial.print("H_SERVO: "); Serial.println(H_SERVO);
+    Serial.print("V_SERVO: "); Serial.println(V_SERVO);
+   
+
+    Serial.print("Type: "); Serial.println(type2);
+    Serial.print("M1: "); Serial.println(M1);
+    Serial.print("M2: "); Serial.println(M2);
+    Serial.print("M3: "); Serial.println(M3);
+    Serial.print("M4: "); Serial.println(M4);
+    Serial.print("M5: "); Serial.println(M5);
+    Serial.print("M6: "); Serial.println(M6);
+    
+  }
+}
+
+
+// MPU READINGS
+void MPU_READING(){
+  mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
+
+  unsigned long now = millis();
+  dt = (now - lastTime) / 1000.0;
+  lastTime = now;
+
+  // ACCELEROMETER ANGLES
+  float accXangle = atan2(ay, az) * 180 / PI;
+  float accYangle = 0;
+
+  float denom = sqrt((long)ay * ay + (long)az * az);
+  if (denom != 0) {
+    accYangle = atan2(-ax, denom) * 180 / PI;
+    } 
+  //RATES (DEG/SEC)
+  gyroXrate = gx / 131.0;
+  gyroYrate = gy / 131.0;
+  gyroZrate = gz / 131.0;
+
+  //COMPLEMENTARY FILTER (ROLL & PITCH)
+  angleX = 0.98 * (angleX + gyroXrate * dt) + 0.02 * accXangle;
+  angleY = 0.98 * (angleY + gyroYrate * dt) + 0.02 * accYangle;
+
+  // YAW (NOT MOST ACCURATE) 
+  angleZ += gyroZrate * dt;
+
+  
+}
+
+//SEND DATA TO BACKEND
+void SEND(){
+  static unsigned long lastSend = 0;
+  if (millis() - lastSend > 1000) {
+    StaticJsonDocument<500> doc;
+    StaticJsonDocument<500> doc1;
+    StaticJsonDocument<500> doc2;
+
+    doc["type"]="leakage";
+    doc["status"]=IsLeaked;
+
+    doc1["type"]="temp";
+    doc1["degree"]=temperature;
+
+   doc2["type"] = "imu";
+   doc2["pitch"] = angleY;
+   doc2["roll"] = angleX;
+   doc2["yaw"] = angleZ;
+
+    String msg;
+    String msg1;
+    String msg2;
+
+    serializeJson(doc, msg);
+    serializeJson(doc1, msg1);
+    serializeJson(doc2, msg2);
+
+    webSocket.sendTXT(msg);
+    webSocket.sendTXT(msg1);
+    webSocket.sendTXT(msg2);
+
+    lastSend = millis();
+  }
+}
+
+// LEAK READINGS
+void LEAKAGE_READING(){
+  level =  analogRead(leakage);
+  if(level>150){
+    IsLeaked=1;
+  }
+  else{
+    IsLeaked=0;
+  }
+}
+
+// TEMP READINGS 
+void TEMP_READING(){
+  temperature = temp.readTemperature();
+}
+
+void setup() {
+  Serial.begin(115200);
+ WiFi.begin(ssid, password);
+ 
+ while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("WiFi connected!");
+
+  // Connect to FastAPI backend running on PC
+  webSocket.begin("backend IP", 8000, "/ws/esp");  // backend IP and route
+  Serial.println("Websocket begin!");
+  webSocket.onEvent(webSocketEvent);
+ webSocket.enableHeartbeat(15000, 3000, 2);
+ lastTime = millis();
+
+  
+  Wire.begin(D2,D1);
+  mpu.initialize();
+
+
+  if (mpu.testConnection()) {
+    Serial.println("MPU6050 connection successful");
+  } else {
+    Serial.println("MPU6050 connection failed");
+  }
+
+  
+}
+
+void loop() {
+ 
+// MPU READINGS
+MPU_READING();
+
+// LEAK READINGS
+LEAKAGE_READING();
+
+// TEMP READINGS 
+TEMP_READING();
+
+//SEND DATA TO BACK END
+SEND();
+
+// // WEBSOCKETS LOOP
+webSocket.loop();
+
+}
