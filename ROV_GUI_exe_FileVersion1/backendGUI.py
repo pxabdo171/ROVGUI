@@ -12,9 +12,26 @@ import cv2
 import numpy as np
 import os
 import serial
-
+from nicegui import ui
+import json
+import base64
+from datetime import datetime
+from typing import Optional, Set
+from ultralytics import YOLO
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+import uvicorn
+import threading
+import time
+from fastapi.responses import StreamingResponse
+# Image processing and AI libraries
+import cv2
+import numpy as np
+import contextlib
+import io
+import os
+import asyncio
 # ---------------- Arduino Setup ----------------
-COM_PORT = "COM3"  
+COM_PORT = "COM5"  
 BAUD_RATE = 9600
 
 serialInst = serial.Serial()
@@ -32,6 +49,8 @@ except serial.SerialException as e:
 # ---------------- FastAPI & YOLO ----------------
 app = FastAPI()
 gui_clients: Set[WebSocket] = set()
+esp_client: Optional[WebSocket] = None
+
 
 model_shapes = YOLO(r"C:\Users\mokaa\PilotGUI\Shapes_Task.pt")
 model_shapes.verbose = False
@@ -44,6 +63,19 @@ model_waste.verbose = False
 
 SAVE_DIR = "screenshots"
 os.makedirs(SAVE_DIR, exist_ok=True)
+
+def _jpeg_bytes(img_bgr, quality: int = 85) -> bytes | None:
+    ok, buf = cv2.imencode(".jpg", img_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+    return buf.tobytes() if ok else None
+
+def _save_bytes(path: str, data: bytes) -> None:
+    with open(path, "wb") as f:
+        f.write(data)
+
+# 2- Convert JPEG bytes to data URL
+def _to_data_url(jpeg_bytes: bytes) -> str:
+    b64 = base64.b64encode(jpeg_bytes).decode("ascii")
+    return f"data:image/jpeg;base64,{b64}"
 
 # ---------------- Camera Capture ----------------
 latest_frame = None
@@ -90,6 +122,84 @@ def gen_frames():
 def video():
     return StreamingResponse(gen_frames(), media_type="multipart/x-mixed-replace; boundary=frame")
 
+
+def run_shapes_with_overlay(img_bytes: bytes):
+    arr = np.frombuffer(img_bytes, np.uint8)
+    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+
+    with contextlib.redirect_stdout(io.StringIO()):
+        results = model_shapes(img)
+
+    counts = {"Circle": 0, "Square": 0, "Triangle": 0, "Cross": 0}
+    for box in results[0].boxes:
+        try:
+            cls = int(box.cls[0])
+            label = model_shapes.names[cls]
+            if label in counts:
+                counts[label] += 1
+        except Exception as e:
+            print("Error in shapes box:", e)
+
+    counts["equation"] = (
+        counts["Circle"] * 20 +
+        counts["Square"] * 15 +
+        counts["Triangle"] * 10 +
+        counts["Cross"] * 5
+    )
+
+    overlay_bgr = results[0].plot()
+    overlay_jpeg = _jpeg_bytes(overlay_bgr, 85)
+    return counts, overlay_jpeg
+
+def run_waste_with_overlay(img_bytes: bytes):
+    arr = np.frombuffer(img_bytes, np.uint8)
+    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+
+    with contextlib.redirect_stdout(io.StringIO()):
+        results = model_waste(img)
+
+    waste_counts = {}
+    for box in results[0].boxes:
+        try:
+            conf = float(box.conf[0])
+            if conf > 0.6:
+                cls = int(box.cls[0])
+                label = model_waste.names[cls]
+                waste_counts[label] = waste_counts.get(label, 0) + 1
+        except Exception as e:
+            print("⚠ Error in waste box:", e)
+
+    overlay_bgr = results[0].plot()
+    overlay_jpeg = _jpeg_bytes(overlay_bgr, 85)
+    return waste_counts, overlay_jpeg
+
+def run_fish_with_overlay(img_bytes: bytes):
+    arr = np.frombuffer(img_bytes, np.uint8)
+    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+   
+    with contextlib.redirect_stdout(io.StringIO()):
+        results = model_fish(img)
+
+    fish_counts = {}
+    for box in results[0].boxes:
+        try:
+            conf = float(box.conf[0])
+            if conf >= 0.6:
+                cls = int(box.cls[0])
+                label = model_fish.names[cls]
+                fish_counts[label] = fish_counts.get(label, 0) + 1
+        except Exception as e:
+            print("⚠ Error in fish box:", e)
+  
+    overlay_bgr = results[0].plot()
+    overlay_jpeg = _jpeg_bytes(overlay_bgr, 85)
+    return fish_counts, overlay_jpeg
+
+
+
+
+
+
 # ---------------- Arduino Communication ----------------
 def write_arduino(message: str) -> bool:
     try:
@@ -99,6 +209,19 @@ def write_arduino(message: str) -> bool:
     except Exception as e:
         print(f"⚠ Error sending to Arduino: {e}")
         return False
+async def send_to_gui(message: dict):
+    # تحويل الرسالة إلى JSON
+    msg_json = json.dumps(message)
+    disconnected_clients = set()
+    for ws in gui_clients:
+        try:
+            await ws.send_text(msg_json)
+        except Exception as e:
+            print(f"⚠ Failed to send to GUI: {e}")
+            disconnected_clients.add(ws)
+    # إزالة أي عملاء اتقطعوا
+    for ws in disconnected_clients:
+        gui_clients.remove(ws)    
 
 def read_arduino():
     while True:
@@ -106,10 +229,10 @@ def read_arduino():
             data = serialInst.readline().decode('utf-8').strip()
             if data:
                 print("📥 Arduino:", data)
+                asyncio.run(send_to_gui(data))
         except Exception as e:
             print(f"⚠ Arduino read error: {e}")
         time.sleep(0.01)
-
     
 # ---------------- WebSocket ----------------
 @app.websocket("/ws/gui")
@@ -122,6 +245,7 @@ async def gui_ws(websocket: WebSocket):
         while True:
             data = await websocket.receive_text()
             msg = json.loads(data)
+            await on_command(msg)
             if msg.get("type") == "command":
                 command = msg.get("value", "")
                 if command:
@@ -137,6 +261,13 @@ async def gui_ws(websocket: WebSocket):
     except WebSocketDisconnect:
         gui_clients.remove(websocket)
         print("GUI disconnected")
+
+
+async def on_command(msg: dict):
+    if msg["type"] == "command":
+        direction = msg.get("dir")
+        print(f"🎮 Received command: {direction}")
+        write_arduino(direction)        
 
 # ---------------- Main ----------------
 if __name__ == "__main__":
@@ -154,6 +285,6 @@ if __name__ == "__main__":
                     print("📥 Arduino (initial):", data)
         except Exception as e:
             print(f"⚠ Error reading initial Arduino data: {e}")
-
+    ui.run_with(app)
     # Start FastAPI / Uvicorn server
     uvicorn.run(app, host="0.0.0.0", port=8000)

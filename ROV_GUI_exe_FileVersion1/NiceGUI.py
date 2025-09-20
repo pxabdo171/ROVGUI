@@ -576,7 +576,8 @@ def index_page():
       r.addEventListener('input', () => { if (v) v.textContent = r.value; });
     }
                      
-      
+    
+       
   
 
   const horizontalRange = document.getElementById('horizontal-range');
@@ -608,6 +609,7 @@ def index_page():
 
     horizontalRange.addEventListener('input', sendServoValues);
     verticalRange.addEventListener('input', sendServoValues);
+                     
 
     function sendServoValues() {
         const horizontalValue = horizontalRange.value;
@@ -626,6 +628,23 @@ def index_page():
             ws.send(JSON.stringify(msg));
         }
     }
+
+      window.ws = ws;
+        document.addEventListener("keydown", (event) => {
+            let dir = null;
+            if (event.key === "ArrowUp") 
+                     dir = 
+                     "test FR 2000";
+            if (event.key === "ArrowUp") dir = "f";
+            if (event.key === "ArrowDown") dir = "s";
+            if (event.key === "ArrowLeft") dir = "l";
+            if (event.key === "ArrowRight") dir = "r";
+            if (dir) {
+                ws.send(JSON.stringify({type: "command", dir: dir}));
+                     
+
+            }
+        });                                   
 
   document.querySelectorAll('.joystick-wrap').forEach(wrapper => {
   const joystick = wrapper.querySelector('.joystick');
@@ -686,7 +705,7 @@ def index_page():
         if (!cameraOpen) {
  
             videoDiv.innerHTML =
-                '<img id="camera-stream" src="http://192.168.2.204:8000/video" ' +
+                '<img id="camera-stream" src="http://192.168.1.4:8000/video" ' +
                 'style="width:500px; height:300px; border:none;" />';
             this.innerText = "Close Camera";
             cameraOpen = true;
@@ -730,8 +749,15 @@ document.getElementById("cam2").addEventListener("click", function() {
   };
 
   socket.onmessage = (event) => {
-    const data = JSON.parse(event.data);
+    console.log("Raw:", event.data);
 
+        // أول parse يطلع string
+        const once = JSON.parse(event.data);
+        console.log("After first parse:", once);
+
+        // تاني parse يطلع object حقيقي
+        const data = JSON.parse(once);
+        console.log("Final Parsed:", data);
     if (data.type === "imu") {
    
       document.getElementById("pitch").textContent = `Pitch: ${data.pitch}°`;
@@ -1715,7 +1741,7 @@ input[type=range]::-moz-range-thumb {
 
  
     <div class="panel video-area" style="height: 550px;">
-      <img src="http://192.168.2.204:8000/video" 
+      <img src="http://192.168.1.4:8000/video" 
      style="width:100%;height:400px; object-fit:cover; border-radius:10px;">
       <div class="controls" style="display:flex;flex-direction:column;gap:12px">
         <button class="btn" id="open-camera">Take screenshot</button>
