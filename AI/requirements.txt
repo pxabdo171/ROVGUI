@@ -1,0 +1,9 @@
+ultralytics
+fastapi
+uvicorn
+nicegui
+flask
+opencv-python
+numpy
+websockets
+starlette
