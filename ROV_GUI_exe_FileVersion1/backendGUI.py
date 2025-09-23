@@ -31,7 +31,7 @@ import io
 import os
 import asyncio
 # ---------------- Arduino Setup ----------------
-COM_PORT = "COM5"  
+COM_PORT = "COM6"  
 BAUD_RATE = 9600
 
 serialInst = serial.Serial()
@@ -79,7 +79,7 @@ def _to_data_url(jpeg_bytes: bytes) -> str:
 
 # ---------------- Camera Capture ----------------
 latest_frame = None
-rtsp_url = "rtsp://admin:sall1221A@10.0.0.12:554/Streaming/Channels/101"
+rtsp_url = "rtsp://admin:sall1221A@192.168.1.3:554/Streaming/Channels/101"
 
 def capture_loop():
     global latest_frame
@@ -210,7 +210,7 @@ def write_arduino(message: str) -> bool:
         print(f"⚠ Error sending to Arduino: {e}")
         return False
 async def send_to_gui(message: dict):
-    # تحويل الرسالة إلى JSON
+
     msg_json = json.dumps(message)
     disconnected_clients = set()
     for ws in gui_clients:
@@ -219,7 +219,7 @@ async def send_to_gui(message: dict):
         except Exception as e:
             print(f"⚠ Failed to send to GUI: {e}")
             disconnected_clients.add(ws)
-    # إزالة أي عملاء اتقطعوا
+
     for ws in disconnected_clients:
         gui_clients.remove(ws)    
 
