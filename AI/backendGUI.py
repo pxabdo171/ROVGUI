@@ -17,26 +17,36 @@ import io
 import asyncio
 
 # ---------------- FastAPI & YOLO ----------------
+
+# Directory to save screenshots
+SAVE_DIR = "screenshots"
+os.makedirs(SAVE_DIR, exist_ok=True)
+
+def _save_bytes(path: str, data: bytes) -> None:
+    with open(path, "wb") as f:
+        f.write(data)
+
 app = FastAPI()
 gui_clients: Set[WebSocket] = set()
 esp_client: Optional[WebSocket] = None
 
-model_shapes = YOLO(r"C:\Users\Ali\ROV_GUI_exe_FileVersion1\Shapes_Task.pt")
+model_shapes = YOLO(r"C:\Users\mokaa\AI\Shapes_Task.pt")
 model_shapes.verbose = False
 
-model_fish = YOLO(r"C:\Users\Ali\ROV_GUI_exe_FileVersion1\best_fish_no_augmentation.pt")
+model_fish = YOLO(r"C:\Users\mokaa\AI\best_fish_no_augmentation.pt")
 model_fish.verbose = False
 
-model_waste = YOLO(r"C:\Users\Ali\ROV_GUI_exe_FileVersion1\Waste_Model.pt")
+model_waste = YOLO(r"C:\Users\mokaa\AI\Waste_Model.pt")
 model_waste.verbose = False
 
-SAVE_DIR = "screenshots"
-os.makedirs(SAVE_DIR, exist_ok=True)
 
+# help for back image (Eraky)
+# 1- Convert BGR image to JPEG bytes
 def _jpeg_bytes(img_bgr, quality: int = 85) -> bytes | None:
     ok, buf = cv2.imencode(".jpg", img_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
     return buf.tobytes() if ok else None
 
+# 2- Convert JPEG bytes to data URL
 def _to_data_url(jpeg_bytes: bytes) -> str:
     b64 = base64.b64encode(jpeg_bytes).decode("ascii")
     return f"data:image/jpeg;base64,{b64}"
@@ -87,9 +97,12 @@ def video():
     return StreamingResponse(gen_frames(), media_type="multipart/x-mixed-replace; boundary=frame")
 
 # ---------------- YOLO Models ----------------
+
+# 3- Run models and return counts and overlay image (Eraky)
 def run_shapes_with_overlay(img_bytes: bytes):
     arr = np.frombuffer(img_bytes, np.uint8)
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+
     with contextlib.redirect_stdout(io.StringIO()):
         results = model_shapes(img)
 
@@ -117,6 +130,7 @@ def run_shapes_with_overlay(img_bytes: bytes):
 def run_waste_with_overlay(img_bytes: bytes):
     arr = np.frombuffer(img_bytes, np.uint8)
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+
     with contextlib.redirect_stdout(io.StringIO()):
         results = model_waste(img)
 
@@ -138,6 +152,7 @@ def run_waste_with_overlay(img_bytes: bytes):
 def run_fish_with_overlay(img_bytes: bytes):
     arr = np.frombuffer(img_bytes, np.uint8)
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+   
     with contextlib.redirect_stdout(io.StringIO()):
         results = model_fish(img)
 
@@ -151,7 +166,7 @@ def run_fish_with_overlay(img_bytes: bytes):
                 fish_counts[label] = fish_counts.get(label, 0) + 1
         except Exception as e:
             print("⚠ Error in fish box:", e)
-
+  
     overlay_bgr = results[0].plot()
     overlay_jpeg = _jpeg_bytes(overlay_bgr, 85)
     return fish_counts, overlay_jpeg
@@ -166,7 +181,55 @@ async def gui_ws(websocket: WebSocket):
         while True:
             data = await websocket.receive_text()
             msg = json.loads(data)
-            print("GUI message:", msg)
+
+            if msg.get("type") == "screenshot":
+                img_b64 = msg.get("image", "")
+                model_type = msg.get("model_type", "shapes")
+                request_id = msg.get("requestId")
+
+                if "," in img_b64:
+                    _, imgstr = img_b64.split(",", 1)
+                else:
+                    imgstr = img_b64
+
+                try:
+                    img_bytes = base64.b64decode(imgstr)    
+                    filename = msg.get("filename") or f"screenshot_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}.jpg"
+
+                    if model_type == "shapes":
+                        data, overlay_jpeg = run_shapes_with_overlay(img_bytes)
+                        payload = {"type": "shapes_analysis", "data": data, "requestId": request_id}
+                        
+                    elif model_type == "waste":
+                        data, overlay_jpeg = run_waste_with_overlay(img_bytes)
+                        payload = {"type": "waste_analysis", "data": data, "requestId": request_id}
+                    
+                    elif model_type == "fish":
+                        data, overlay_jpeg = run_fish_with_overlay(img_bytes)
+                        payload = {"type": "fish_analysis", "data": data, "requestId": request_id}
+                    else:
+                        payload = {"type": "error", "message": f"Unknown model_type: {model_type}", "requestId": request_id}
+                        overlay_jpeg = None
+
+                    if overlay_jpeg:
+                        name, ext = os.path.splitext(filename)
+                        annotated_path = os.path.join(SAVE_DIR, f"{name}_annotated{ext}")
+                        _save_bytes(annotated_path, overlay_jpeg)
+                        print(f"🖼️ Annotated saved: {annotated_path}")
+
+                        payload["image"] = _to_data_url(overlay_jpeg)
+
+                    await websocket.send_text(json.dumps(payload))
+
+                except Exception as e:
+                    print("Failed to process image:", e)
+                    await websocket.send_text(json.dumps({
+                        "type": "error",
+                        "message": f"failed to process image: {e}",
+                        "requestId": request_id
+                    }))
+            else:        
+             print("GUI message:", msg)
     except WebSocketDisconnect:
         gui_clients.remove(websocket)
         print("GUI disconnected")
