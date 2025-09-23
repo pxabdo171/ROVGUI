@@ -705,7 +705,7 @@ def index_page():
         if (!cameraOpen) {
  
             videoDiv.innerHTML =
-                '<img id="camera-stream" src="http://192.168.1.4:8000/video" ' +
+                '<img id="camera-stream" src="http://192.168.1.2:8000/video" ' +
                 'style="width:500px; height:300px; border:none;" />';
             this.innerText = "Close Camera";
             cameraOpen = true;
@@ -749,33 +749,49 @@ document.getElementById("cam2").addEventListener("click", function() {
   };
 
   socket.onmessage = (event) => {
-    console.log("Raw:", event.data);
+  let raw = event.data;
+  console.log("Raw WS message:", raw);
 
-        // أول parse يطلع string
-        const once = JSON.parse(event.data);
-        console.log("After first parse:", once);
+  let data;
+  try {
+    data = JSON.parse(raw);
+    // If the result is still a string (means double-encoded JSON)
+    if (typeof data === "string") {
+      data = JSON.parse(data);
+    }
+  } catch (err) {
+    console.error("Parse failed:", err.message);
+    return;
+  }
 
-        // تاني parse يطلع object حقيقي
-        const data = JSON.parse(once);
-        console.log("Final Parsed:", data);
-    if (data.type === "imu") {
-   
-      document.getElementById("pitch").textContent = `Pitch: ${data.pitch}°`;
-      document.getElementById("roll").textContent = `Roll: ${data.roll}°`;
-      document.getElementById("yaw").textContent = `Yaw: ${data.yaw}°`;
+  console.log("Final Parsed Object:", data);
 
-   
-      updateYaw(data.yaw);
-    }
-    if (data.type === "temp") {
-      document.getElementById("temp").textContent = `${data.degree}°C`;
-    }
-    if (data.type === "depth") {
-      document.getElementById("depth").textContent = `${data.distance} m`;
-    }
-    if (data.type === "leakage") {
+  handleData(data);
+};
+
+function handleData(data) {
+  // ----- IMU -----
+  if ("pitch" in data && "roll" in data && "yaw" in data) {
+    document.getElementById("pitch").textContent = `Pitch: ${data.pitch.toFixed(2)}°`;
+    document.getElementById("roll").textContent  = `Roll: ${data.roll.toFixed(2)}°`;
+    document.getElementById("yaw").textContent   = `Yaw: ${data.yaw.toFixed(2)}°`;
+    if (typeof updateYaw === "function") updateYaw(data.yaw);
+  }
+
+  // ----- Temperature -----
+  if ("temp" in data) {
+    document.getElementById("temp").textContent = `${data.temp}°C`;
+  }
+
+  // ----- Depth -----
+  if ("heave" in data) {
+    document.getElementById("depth").textContent = `${data.heave} m`;
+  }
+
+  // ----- Leakage -----
+  if ("leak" in data) {
     const leakageDiv = document.getElementById("leakage-status");
-    if (data.status === 1) {
+    if (data.leak === 1) {
       leakageDiv.textContent = "Danger";
       leakageDiv.style.backgroundColor = "#7f1d1d";
       leakageDiv.style.color = "white";
@@ -1741,7 +1757,7 @@ input[type=range]::-moz-range-thumb {
 
  
     <div class="panel video-area" style="height: 550px;">
-      <img src="http://192.168.1.4:8000/video" 
+      <img src="http://192.168.1.2:8000/video" 
      style="width:100%;height:400px; object-fit:cover; border-radius:10px;">
       <div class="controls" style="display:flex;flex-direction:column;gap:12px">
         <button class="btn" id="open-camera">Take screenshot</button>
@@ -1973,53 +1989,53 @@ window.addEventListener('DOMContentLoaded', () => {
 
     """)
 
-latest_frame = None
-camera_index = 0   
-rtsp_url = "rtsp://admin:sall1221A@10.0.0.12:554/Streaming/Channels/101"
+# latest_frame = None
+# camera_index = 0   
+# rtsp_url = "rtsp://admin:sall1221A@10.0.0.12:554/Streaming/Channels/101"
 
-def capture_loop():
-    global latest_frame
-    cap = None
+# def capture_loop():
+#     global latest_frame
+#     cap = None
 
-    while True:
-        if cap is None or not cap.isOpened():
-            cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
-            if not cap.isOpened():
-                print(" RTSP stream Connection faild")
-                time.sleep(1)  
-                continue
+#     while True:
+#         if cap is None or not cap.isOpened():
+#             cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
+#             if not cap.isOpened():
+#                 print(" RTSP stream Connection faild")
+#                 time.sleep(1)  
+#                 continue
 
-        ok, frame = cap.read()
-        if ok:
-            latest_frame = frame
-        else:
-            print(" Error frame ")
-            latest_frame = None
-            cap.release()
-            cap=None
+#         ok, frame = cap.read()
+#         if ok:
+#             latest_frame = frame
+#         else:
+#             print(" Error frame ")
+#             latest_frame = None
+#             cap.release()
+#             cap=None
 
 
-threading.Thread(target=capture_loop, daemon=True).start()
+# threading.Thread(target=capture_loop, daemon=True).start()
 
-def gen_frames():
-    global latest_frame
-    while True:
-        if latest_frame is not None:
-            ok, buffer = cv2.imencode('.jpg', latest_frame)
-            if ok:
-                yield (b'--frame\r\n'
-                       b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
-        else:
-            img = np.zeros((400, 600, 3), dtype=np.uint8)
-            cv2.putText(img, "No Camera Signal", (50, 200),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
-            ok, buffer = cv2.imencode('.jpg', img)
-            yield (b'--frame\r\n'
-                   b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+# def gen_frames():
+#     global latest_frame
+#     while True:
+#         if latest_frame is not None:
+#             ok, buffer = cv2.imencode('.jpg', latest_frame)
+#             if ok:
+#                 yield (b'--frame\r\n'
+#                        b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+#         else:
+#             img = np.zeros((400, 600, 3), dtype=np.uint8)
+#             cv2.putText(img, "No Camera Signal", (50, 200),
+#                         cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
+#             ok, buffer = cv2.imencode('.jpg', img)
+#             yield (b'--frame\r\n'
+#                    b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
 
-@app.get("/video_feed")
-def video_feed():
-    return StreamingResponse(gen_frames(), media_type="multipart/x-mixed-replace; boundary=frame")
+# @app.get("/video_feed")
+# def video_feed():
+#     return StreamingResponse(gen_frames(), media_type="multipart/x-mixed-replace; boundary=frame")
 
 @app.get("/set_camera/{index}")
 def set_camera(index: int):
