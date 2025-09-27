@@ -1741,7 +1741,7 @@ input[type=range]::-moz-range-thumb {
 
  
     <div class="panel video-area" style="height: 550px;">
-      <img src="http://10.226.53.199:8000/video" 
+      <img src="http://192.168.1.4:8000/video" 
      style="width:100%;height:400px; object-fit:cover; border-radius:10px;">
       <div class="controls" style="display:flex;flex-direction:column;gap:12px">
         <button class="btn" id="open-camera">Take screenshot</button>

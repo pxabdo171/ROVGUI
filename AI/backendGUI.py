@@ -53,7 +53,7 @@ def _to_data_url(jpeg_bytes: bytes) -> str:
 
 # ---------------- Camera Capture ----------------
 latest_frame = None
-rtsp_url = "rtsp://admin:sall1221A@192.168.1.3:554/Streaming/Channels/101"
+rtsp_url = "rtsp://admin:sall1221A@192.168.1.2:554/Streaming/Channels/101"
 
 def capture_loop():
     global latest_frame
@@ -183,30 +183,42 @@ async def gui_ws(websocket: WebSocket):
             msg = json.loads(data)
 
             if msg.get("type") == "screenshot":
-                img_b64 = msg.get("image", "")
                 model_type = msg.get("model_type", "shapes")
                 request_id = msg.get("requestId")
 
-                if "," in img_b64:
-                    _, imgstr = img_b64.split(",", 1)
-                else:
-                    imgstr = img_b64
+                if latest_frame is None:
+                    await websocket.send_text(json.dumps({
+                        "type": "error",
+                        "message": "No camera frame available",
+                        "requestId": request_id
+                    }))
+                    continue
+
+                # Convert the live frame to JPEG bytes
+                jpeg_bytes = _jpeg_bytes(latest_frame, 90)
+                if jpeg_bytes is None:
+                    await websocket.send_text(json.dumps({
+                        "type": "error",
+                        "message": "Failed to encode frame",
+                        "requestId": request_id
+                    }))
+                    continue
+
+                filename = f"screenshot_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}.jpg"
 
                 try:
-                    img_bytes = base64.b64decode(imgstr)    
-                    filename = msg.get("filename") or f"screenshot_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}.jpg"
-
                     if model_type == "shapes":
-                        data, overlay_jpeg = run_shapes_with_overlay(img_bytes)
+                        data, overlay_jpeg = run_shapes_with_overlay(jpeg_bytes)
                         payload = {"type": "shapes_analysis", "data": data, "requestId": request_id}
-                        
+
                     elif model_type == "waste":
-                        data, overlay_jpeg = run_waste_with_overlay(img_bytes)
+                        data, overlay_jpeg = run_waste_with_overlay(jpeg_bytes)
                         payload = {"type": "waste_analysis", "data": data, "requestId": request_id}
-                    
+
                     elif model_type == "fish":
-                        data, overlay_jpeg = run_fish_with_overlay(img_bytes)
+                        data, overlay_jpeg = run_fish_with_overlay(jpeg_bytes)
                         payload = {"type": "fish_analysis", "data": data, "requestId": request_id}
+
                     else:
                         payload = {"type": "error", "message": f"Unknown model_type: {model_type}", "requestId": request_id}
                         overlay_jpeg = None
@@ -222,17 +234,20 @@ async def gui_ws(websocket: WebSocket):
                     await websocket.send_text(json.dumps(payload))
 
                 except Exception as e:
-                    print("Failed to process image:", e)
+                    print("Failed to process frame:", e)
                     await websocket.send_text(json.dumps({
                         "type": "error",
-                        "message": f"failed to process image: {e}",
+                        "message": f"failed to process frame: {e}",
                         "requestId": request_id
                     }))
-            else:        
-             print("GUI message:", msg)
+
+            else:
+                print("GUI message:", msg)
+
     except WebSocketDisconnect:
         gui_clients.remove(websocket)
         print("GUI disconnected")
+
 
 # ---------------- Main ----------------
 if __name__ == "__main__":
